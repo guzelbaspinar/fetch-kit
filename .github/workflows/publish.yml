@@ -1,153 +1,33 @@
 name: Publish
 
+# Publishes only from a published GitHub Release (which points at a tag/commit
+# on main). Combined with branch protection requiring CI to pass before
+# merging to main, this guarantees CI has succeeded before publish runs.
+# workflow_dispatch is available for manual/emergency publishes.
 on:
-  # merge PR → push to main (required for npm OIDC / Trusted Publisher)
-  push:
-    branches: [main]
-    tags:
-      - 'v*'
+  release:
+    types: [published]
+  workflow_dispatch: {}
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PKG_NAME: '@guzelbaspinar/fetch-kit'
     permissions:
-      actions: read
-      checks: read
       contents: read
       id-token: write # required for npm OIDC trusted publishing; no NPM_TOKEN secret
-      pull-requests: read
     concurrency:
       group: npm-publish
       cancel-in-progress: false
     steps:
-      - name: Resolve merged PR head (main pushes only)
-        if: github.ref == 'refs/heads/main'
-        id: merge
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const sha = context.sha;
-
-            async function findMergedPrToMain() {
-              const { data: associated } =
-                await github.rest.repos.listPullRequestsAssociatedWithCommit({
-                  owner,
-                  repo,
-                  commit_sha: sha,
-                });
-              const fromAssociation = associated.find(
-                (p) => p.merged_at && p.base.ref === 'main',
-              );
-              if (fromAssociation) return fromAssociation;
-
-              const { data: commit } = await github.rest.repos.getCommit({
-                owner,
-                repo,
-                ref: sha,
-              });
-              const message = commit.commit.message;
-              const mergeMatch = message.match(/^Merge pull request #(\d+)/m);
-              const squashMatch = message.match(/\(#(\d+)\)\s*$/m);
-              const prNumber = mergeMatch?.[1] ?? squashMatch?.[1];
-              if (prNumber) {
-                const { data: pr } = await github.rest.pulls.get({
-                  owner,
-                  repo,
-                  pull_number: Number(prNumber),
-                });
-                if (pr.merged_at && pr.base.ref === 'main') return pr;
-              }
-
-              const { data: closed } = await github.rest.pulls.list({
-                owner,
-                repo,
-                state: 'closed',
-                base: 'main',
-                sort: 'updated',
-                direction: 'desc',
-                per_page: 30,
-              });
-              const byMergeCommit = closed.find(
-                (p) => p.merged_at && p.merge_commit_sha === sha,
-              );
-              if (byMergeCommit) return byMergeCommit;
-
-              const commitTime = new Date(commit.commit.committer.date).getTime();
-              const recent = closed.filter((p) => {
-                if (!p.merged_at) return false;
-                const mergedTime = new Date(p.merged_at).getTime();
-                return Math.abs(mergedTime - commitTime) < 20 * 60 * 1000;
-              });
-              if (recent.length === 1) return recent[0];
-              if (recent.length > 1) {
-                recent.sort(
-                  (a, b) =>
-                    Math.abs(new Date(a.merged_at).getTime() - commitTime) -
-                    Math.abs(new Date(b.merged_at).getTime() - commitTime),
-                );
-                return recent[0];
-              }
-
-              return null;
-            }
-
-            const merged = await findMergedPrToMain();
-            if (!merged) {
-              core.setFailed(
-                'Publish runs only after a PR is merged to main (not on direct pushes). Could not resolve merged PR for this commit (common with squash merge).',
-              );
-              return;
-            }
-            core.setOutput('head_sha', merged.head.sha);
-            core.setOutput('pr_number', String(merged.number));
-            core.info(
-              `Merged PR #${merged.number}; CI will be checked on ${merged.head.sha}.`,
-            );
-
-      - name: Require successful CI on merged PR
-        if: github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          HEAD_SHA="${{ steps.merge.outputs.head_sha }}"
-          PR_NUMBER="${{ steps.merge.outputs.pr_number }}"
-          REPO="${{ github.repository }}"
-
-          if gh pr checks "$PR_NUMBER" --repo "$REPO"; then
-            echo "CI checks passed for PR #${PR_NUMBER}."
-            exit 0
-          fi
-
-          STATUS_STATE="$(gh api "repos/${REPO}/commits/${HEAD_SHA}/status" --jq -r '.state // empty')"
-          if [ "$STATUS_STATE" = "success" ]; then
-            echo "Commit status success for ${HEAD_SHA}."
-            exit 0
-          fi
-
-          CONCLUSION="$(gh run list \
-            --repo "$REPO" \
-            --workflow=CI \
-            --commit="$HEAD_SHA" \
-            --limit 1 \
-            --json conclusion \
-            --jq '.[0].conclusion // empty')"
-          if [ "$CONCLUSION" = "success" ]; then
-            echo "CI workflow run succeeded for ${HEAD_SHA}."
-            exit 0
-          fi
-
-          echo "Publish blocked: CI must succeed on merged PR #${PR_NUMBER} (commit ${HEAD_SHA})."
-          echo "PR checks failed; commit status=${STATUS_STATE:-none}; CI run conclusion=${CONCLUSION:-none}."
-          exit 1
-
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Do not pass registry-url to setup-node: it writes _authToken=${NODE_AUTH_TOKEN},
       # which prevents npm from using the Trusted Publisher OIDC exchange (E401/E404).
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22.14.0'
           cache: 'npm'
@@ -177,8 +57,6 @@ jobs:
 
       - name: Skip if this version is already released on npm
         id: npm_version
-        env:
-          PKG_NAME: '@guzelbaspinar/fetch-kit'
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
           echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
@@ -198,8 +76,6 @@ jobs:
 
       - name: Staged release reminder
         if: steps.npm_version.outputs.already_published != 'true'
-        env:
-          PKG_NAME: '@guzelbaspinar/fetch-kit'
         run: |
           PKG_VERSION="${{ steps.npm_version.outputs.version }}"
           echo "Staged ${PKG_NAME}@${PKG_VERSION}. Approve on https://www.npmjs.com/package/${PKG_NAME} or run locally: npm stage approve (2FA)."
