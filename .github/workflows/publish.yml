@@ -80,16 +80,23 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # Do not pass registry-url to setup-node: it writes _authToken=${NODE_AUTH_TOKEN},
+      # which prevents npm from using the Trusted Publisher OIDC exchange (E401/E404).
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          # npm trusted publishing (OIDC) requires npm CLI >= 11.5.1 and Node >= 22.14.0
           node-version: '22.14.0'
-          registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
-      - name: Verify npm CLI version
-        run: npm --version
+      - name: Prepare npm for Trusted Publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+          npm config set registry https://registry.npmjs.org
+          if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then
+            sed -i '/:_authToken=/d' "$NPM_CONFIG_USERCONFIG" || true
+          fi
+          unset NODE_AUTH_TOKEN
 
       - name: Install dependencies
         run: npm ci
@@ -119,11 +126,7 @@ jobs:
             echo "Version ${PKG_VERSION} is not on npm; will publish."
           fi
 
-      - name: Verify npm OIDC authentication
-        if: steps.npm_version.outputs.already_published != 'true'
-        run: npm whoami
-
-      # prepublishOnly in package.json runs typecheck, tests, and build before publish
+      # npm whoami does not reflect OIDC; auth happens during npm publish only.
       - name: Publish to npm (OIDC, tokenless)
         if: steps.npm_version.outputs.already_published != 'true'
-        run: npm publish --access public
+        run: npm publish --provenance --access public
