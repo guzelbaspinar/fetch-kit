@@ -90,7 +90,7 @@ jobs:
 
       - name: Prepare npm for Trusted Publishing
         run: |
-          npm install -g npm@latest
+          npm install -g npm@11.15.0
           npm --version
           npm config set registry https://registry.npmjs.org
           if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then
@@ -111,7 +111,7 @@ jobs:
             exit 1
           fi
 
-      - name: Skip if this version is already on npm
+      - name: Skip if this version is already released on npm
         id: npm_version
         env:
           PKG_NAME: '@guzelbaspinar/fetch-kit'
@@ -120,13 +120,23 @@ jobs:
           echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
           if npm view "${PKG_NAME}@${PKG_VERSION}" version 2>/dev/null | grep -qx "$PKG_VERSION"; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
-            echo "Version ${PKG_VERSION} is already on npm; skipping publish."
+            echo "Version ${PKG_VERSION} is already public on npm; skipping stage publish."
           else
             echo "already_published=false" >> "$GITHUB_OUTPUT"
-            echo "Version ${PKG_VERSION} is not on npm; will publish."
+            echo "Version ${PKG_VERSION} is not public yet; will stage publish."
           fi
 
-      # npm whoami does not reflect OIDC; auth happens during npm publish only.
-      - name: Publish to npm (OIDC, tokenless)
+      # OIDC supports npm stage publish only when Trusted Publisher allows it (direct publish off).
+      # Approve on npmjs.com or locally: npm stage approve (requires 2FA; not available via OIDC).
+      - name: Stage publish to npm (OIDC, tokenless)
         if: steps.npm_version.outputs.already_published != 'true'
-        run: npm publish --provenance --access public
+        run: npm stage publish --access public
+
+      - name: Staged release reminder
+        if: steps.npm_version.outputs.already_published != 'true'
+        env:
+          PKG_NAME: '@guzelbaspinar/fetch-kit'
+        run: |
+          PKG_VERSION="${{ steps.npm_version.outputs.version }}"
+          echo "Staged ${PKG_NAME}@${PKG_VERSION}. Approve on https://www.npmjs.com/package/${PKG_NAME} or run locally: npm stage approve (2FA)."
+          npm stage list 2>/dev/null || true
