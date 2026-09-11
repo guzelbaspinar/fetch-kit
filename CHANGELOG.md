@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-11
+
 ### Fixed
 
 - **`buildUrl()` now ignores `baseUrl` for absolute URLs.** Previously, calling `request({ url: 'https://other-service.com/...' })` while `baseUrl` was configured produced an invalid, unusable URL (e.g. `https://api.example.com/https://other-service.com/...`). Absolute `http(s)://` URLs now bypass `baseUrl` entirely, as documented.
