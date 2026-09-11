@@ -1,7 +1,7 @@
 name: CI
 
 # Runs when a PR targets main (open / update / reopen).
-# Merge to main triggers Publish (see publish.yml), which re-runs checks before npm publish.
+# After merge, Publish runs only if the latest CI on the PR head commit succeeded (see publish.yml).
 on:
   pull_request:
     branches: [main]
