@@ -12,8 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: read
+      checks: read
       contents: read
       id-token: write # required for npm OIDC trusted publishing; no NPM_TOKEN secret
+      pull-requests: read
     concurrency:
       group: npm-publish
       cancel-in-progress: false
@@ -37,6 +39,7 @@ jobs:
               return;
             }
             core.setOutput('head_sha', merged.head.sha);
+            core.setOutput('pr_number', String(merged.number));
             core.info(`Merged PR #${merged.number}; CI will be checked on ${merged.head.sha}.`);
 
       - name: Require successful CI on merged PR
@@ -45,19 +48,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           HEAD_SHA="${{ steps.merge.outputs.head_sha }}"
+          PR_NUMBER="${{ steps.merge.outputs.pr_number }}"
+          REPO="${{ github.repository }}"
+
+          if gh pr checks "$PR_NUMBER" --repo "$REPO"; then
+            echo "CI checks passed for PR #${PR_NUMBER}."
+            exit 0
+          fi
+
+          STATUS_STATE="$(gh api "repos/${REPO}/commits/${HEAD_SHA}/status" --jq -r '.state // empty')"
+          if [ "$STATUS_STATE" = "success" ]; then
+            echo "Commit status success for ${HEAD_SHA}."
+            exit 0
+          fi
+
           CONCLUSION="$(gh run list \
-            --repo "${{ github.repository }}" \
-            --workflow=ci.yml \
+            --repo "$REPO" \
+            --workflow=CI \
             --commit="$HEAD_SHA" \
-            --event=pull_request \
             --limit 1 \
             --json conclusion \
             --jq '.[0].conclusion // empty')"
-          if [ "$CONCLUSION" != "success" ]; then
-            echo "Publish blocked: CI must succeed on PR commit ${HEAD_SHA} (latest CI conclusion: ${CONCLUSION:-none})."
-            exit 1
+          if [ "$CONCLUSION" = "success" ]; then
+            echo "CI workflow run succeeded for ${HEAD_SHA}."
+            exit 0
           fi
-          echo "CI succeeded on PR commit ${HEAD_SHA}; continuing to publish."
+
+          echo "Publish blocked: CI must succeed on merged PR #${PR_NUMBER} (commit ${HEAD_SHA})."
+          echo "PR checks failed; commit status=${STATUS_STATE:-none}; CI run conclusion=${CONCLUSION:-none}."
+          exit 1
 
       - uses: actions/checkout@v4
 
