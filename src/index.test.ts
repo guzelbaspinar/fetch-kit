@@ -199,6 +199,22 @@ describe('request() - successful requests', () => {
 
     assert.equal(capturedInit?.body, undefined);
   });
+
+  it('does not crash parsing the body of a HEAD response with a JSON Content-Type but empty body', async () => {
+    const fetchImpl = mock.fn(
+      async () =>
+        new Response(null, {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+    );
+    configure({ fetchImpl });
+
+    const res = await request({ url: 'https://api.example.com/echo-method', method: 'HEAD' });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.data, undefined);
+  });
 });
 
 describe('request() - AbortSignal', () => {
@@ -279,6 +295,22 @@ describe('configure() - logger', () => {
     configure({ fetchImpl, logger, retry: { retries: 2, baseDelayMs: 5 } });
 
     await assert.rejects(request({ url: 'https://api.example.com/flaky' }));
+
+    assert.equal(logger.warn.mock.calls.length, 2);
+    assert.equal(logger.error.mock.calls.length, 1);
+  });
+
+  it('calls logger.error when retries are exhausted due to a persistent HTTP status error', async () => {
+    const logger = {
+      error: mock.fn(),
+      warn: mock.fn(),
+      info: mock.fn(),
+      debug: mock.fn()
+    };
+    const fetchImpl = mock.fn(async () => new Response('down', { status: 503 }));
+    configure({ fetchImpl, logger, retry: { retries: 2, baseDelayMs: 5 } });
+
+    await assert.rejects(request({ url: 'https://api.example.com/always-down' }));
 
     assert.equal(logger.warn.mock.calls.length, 2);
     assert.equal(logger.error.mock.calls.length, 1);

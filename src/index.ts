@@ -125,6 +125,10 @@ class FetchKitEngine {
 
         if (!response.ok) {
           const text = await response.text().catch(() => '');
+          this.logger.error?.(
+            `fetch-kit: ${method} ${url} failed after ${attempt} attempt(s), giving up.`,
+            { status: response.status }
+          );
           throw new FetchKitError(`HTTP ${response.status} for ${method} ${url}`, {
             url,
             method,
@@ -134,7 +138,7 @@ class FetchKitEngine {
           });
         }
 
-        const data = await this.parseBody<TResponse>(response);
+        const data = await this.parseBody<TResponse>(response, method);
         return { data, status: response.status, headers: response.headers, response };
       } catch (error) {
         timers.forEach(clearTimeout);
@@ -180,8 +184,8 @@ class FetchKitEngine {
     await sleep(delayMs, signal);
   }
 
-  private async parseBody<T>(response: Response): Promise<T> {
-    if (response.status === 204) return undefined as T;
+  private async parseBody<T>(response: Response, method: HttpMethod): Promise<T> {
+    if (response.status === 204 || method === 'HEAD') return undefined as T;
     const contentType = response.headers.get('content-type') ?? '';
     if (contentType.includes('application/json')) {
       return (await response.json()) as T;

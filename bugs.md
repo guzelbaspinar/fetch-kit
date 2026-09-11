@@ -4,7 +4,78 @@
 **Repo:** https://github.com/guzelbaspinar/fetch-kit
 **İnceleme yöntemi:** Repo klonlandı, `tsup` ile derlendi, bulgular gerçek kod çalıştırılarak (Node.js) doğrulandı.
 
----
+> ## 🔄 GÜNCELLEME (v0.1.6) — Tüm buglar düzeltildi ✅
+>
+> Yazar `fix: resolve buildUrl/baseUrl, Content-Type case, and abort-during-retry bugs (#12)` commit'i ile paketi **0.1.6**'ya yükseltti. Repo yeniden klonlanıp derlendi ve aşağıdaki üç test **tekrar çalıştırılarak** doğrulandı:
+>
+> | # | Bug | Yeniden Test Sonucu |
+> |---|-----|----------------------|
+> | 1 | `buildUrl` mutlak URL + `baseUrl` | ✅ **Düzeltilmiş** — `https://other-service.com/data` artık olduğu gibi kullanılıyor, `baseUrl` bu durumda yok sayılıyor |
+> | 2 | Case-sensitive `Content-Type` kontrolü | ✅ **Düzeltilmiş** — `content-type` (küçük harf) artık doğru tanınıyor, çakışan header oluşmuyor |
+> | 3 | Retry bekleme süresi `AbortSignal`'i görmezden geliyordu | ✅ **Düzeltilmiş** — abort artık ~2ms içinde etkili oluyor (önceden 60 saniye sürüyordu) |
+>
+> Ayrıca **Bug 3'ün yan etkisiyle bahsedilen tasarım riski** (`isNetworkError`'ın her hatayı network hatası sayması) da düzeltilmiş: artık yalnızca `TypeError` (fetch/undici bağlantı hataları) ve bilinen Node hata kodları (`ECONNRESET`, `ENOTFOUND` vb.) retry edilebilir sayılıyor; alakasız programlama hataları artık sessizce retry edilmiyor.
+>
+> **README güncellemeleri de yapılmış:**
+> - Yeni "Module formats (ESM, CJS, TypeScript)" bölümü eklenmiş (ESM/CJS/TS örnekleriyle).
+> - `baseUrl` tablosunda mutlak URL davranışı artık doğru açıklanıyor ("ignored... this lets you call other hosts/services").
+> - Request body bölümünde Content-Type kontrolünün case-insensitive olduğu açıkça belirtilmiş.
+> - Retry bölümünde ağ hatası tespitinin artık `TypeError`/bilinen hata kodlarına dayandığı belirtilmiş.
+> - Cancellation bölümüne "**Cancellation and retries**" alt başlığı eklenerek abort'un backoff bekleme sürecini de anında kestiği net biçimde yazılmış.
+>
+> Paketin kendi test suite'i de çalıştırıldı: **48/48 test geçti**, 0 hata.
+>
+> ## 🧪 İKİNCİ TUR — Tam Kapsamlı Test (v0.1.6)
+>
+> Bu ikinci turda **52 ayrı senaryo** gerçek bir HTTP sunucusuna karşı (mock `fetchImpl` değil, gerçek `node:http` sunucusu + gerçek native `fetch`) test edildi: tüm HTTP metodları (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS), tüm `body`/`rawBody`/`FormData` kombinasyonları, yanıt `Content-Type` çeşitleri (json, json+charset, text/plain, text/csv, octet-stream, header yok, 204, bozuk JSON), query param encode kuralları, `baseUrl` birleştirme, header merge sırası, tüm retry mekanizmaları (`shouldRetry`, `computeDelay`, `onRetry`, `retryOnStatusCodes`, global+per-request merge, network hatası ayrımı), `timeoutMs`, `AbortSignal` (uçuşta + retry-backoff sırasında + önceden abort edilmiş), `FetchKitError` alanları, logger injection ve `resetConfiguration`.
+>
+> **Sonuç: 52 testten 50'si geçti, 2 yeni gerçek bug bulundu:**
+>
+> ### 🔴 Yeni Bug 4 — `HEAD` isteklerinde yanıt gövdesi hatalı parse ediliyor (crash)
+> Sunucu `HEAD` isteğine `Content-Type: application/json` header'ı ile ama (HTTP spec gereği) **boş gövdeyle** cevap verdiğinde, kütüphane yine de `response.json()` çağırıyor ve `SyntaxError: Unexpected end of JSON input` ile patlıyor. Bu hata `FetchKitError` içine sarılıp network hatasıymış gibi kullanıcıya dönüyor — oysa istek aslında **başarılı** (HTTP 200), sadece kütüphanenin gövde ayrıştırma mantığı `HEAD` özel durumunu (204'te olduğu gibi) hesaba katmıyor.
+> ```
+> caught: Request failed for HEAD http://.../echo-method
+> cause: SyntaxError: Unexpected end of JSON input
+>     at parseBody (dist/index.js:222)
+> ```
+> Bu, gerçek dünyada `HEAD` ile herhangi bir JSON API'ye istek atan her kullanıcıyı etkiler (çoğu API, `HEAD` yanıtında `GET` ile aynı header'ları — dolayısıyla `Content-Type: application/json`'ı — döner, gövde olmadan).
+>
+> **Önerilen düzeltme:** `parseBody()` içinde `204` kontrolüne benzer şekilde `method === 'HEAD'` durumunu da erken dönecek şekilde ele alın:
+> ```ts
+> private async parseBody<T>(response: Response, method: HttpMethod): Promise<T> {
+>   if (response.status === 204 || method === 'HEAD') return undefined as T;
+>   ...
+> }
+> ```
+>
+> ### 🟡 Yeni Bug 5 — `logger.error` sadece network hatalarında çağrılıyor, HTTP status hatalarında değil (asimetri)
+> Retry hakları tükendiğinde:
+> - **Network/timeout hatası** ile tükenirse → `logger.warn` (her retry'de) + `logger.error` (son hata) **ikisi de** çağrılıyor. ✅
+> - **HTTP status hatası** (örn. sürekli `503`) ile tükenirse → `logger.warn` çağrılıyor ama **`logger.error` hiç çağrılmıyor**. ❌
+>
+> Test kanıtı:
+> ```
+> // HTTP 503 ile retry tükenince:
+> logs = { warn: 1, error: 0 }   ❌ error çağrılmalıydı
+>
+> // Network hatasıyla retry tükenince:
+> logs = { warn: 1, error: 1 }   ✅ tutarlı
+> ```
+> Sebep: `index.ts`'te `!response.ok` dalında (HTTP status ile başarısız olan istekler) `FetchKitError` doğrudan fırlatılırken `this.logger.error?.()` çağrısı unutulmuş; bu çağrı yalnızca `catch` bloğundaki (network/exception) "pes etme" yolunda var. Bu, production'da `logger.error`'a bağlı alarm/monitoring kuran ekiplerin **kalıcı 5xx/429 hatalarını hiç görmemesi** anlamına gelir — sadece network kesintileri loglanır, asıl sık karşılaşılan senaryo olan "API sürekli 503 dönüyor" durumu sessiz kalır.
+>
+> **Önerilen düzeltme:** HTTP status hatası fırlatılmadan hemen önce de aynı `logger.error` çağrısını ekleyin:
+> ```ts
+> if (!response.ok) {
+>   const text = await response.text().catch(() => '');
+>   this.logger.error?.(`fetch-kit: ${method} ${url} failed after ${attempt} attempt(s), giving up.`, { status: response.status });
+>   throw new FetchKitError(...);
+> }
+> ```
+>
+> ### Not: Yanlış pozitif (kütüphane bug'ı değil)
+> İlk denemede `rawBody` ile string gönderildiğinde beklenmedik bir `Content-Type: text/plain;charset=UTF-8` header'ı gözlemlendi ve önce bug sanıldı. Ancak bu, **native `fetch`/undici'nin kendi davranışı** — ham string body verildiğinde tarayıcı/Node fetch standardı gereği otomatik bu header'ı ekliyor, fetch-kit buna müdahale etmiyor. README'nin "no automatic serialization" ifadesi teknik olarak doğru (kütüphane JSON.stringify yapmıyor), sadece native fetch'in kendi varsayılanı devreye giriyor. Bu netleştirme README'ye tek satırlık bir dipnot olarak eklenebilir ama bug değildir.
+>
+> ---
 
 ## Bug 1 — `buildUrl`: mutlak URL + `baseUrl` kombinasyonu geçersiz URL üretiyor
 
@@ -168,11 +239,13 @@ Modül dağıtımı (ESM/CJS/TypeScript) tarafı test edildi ve doğru çalışt
 
 ## Özet Tablo
 
-| # | Bug | Önem | Etki |
-|---|-----|------|------|
-| 1 | `buildUrl` mutlak URL + `baseUrl` → geçersiz URL | Yüksek | İstekler yanlış adrese/404'e gider |
-| 2 | Case-sensitive `Content-Type` kontrolü | Orta | Çakışan/geçersiz header, sunucu tarafında öngörülemez davranış |
-| 3 | Retry bekleme süresi `AbortSignal`'i görmezden geliyor | **Kritik** | Kullanıcı iptali dakikalarca gecikebilir, UI/kaynak sızıntısı riski |
-| — | `isNetworkError` aşırı geniş kapsam | Düşük (tasarım notu) | Programlama hataları network hatası gibi retry edilebilir |
+| # | Bug | Önem | Etki | Durum |
+|---|-----|------|------|-------|
+| 1 | `buildUrl` mutlak URL + `baseUrl` → geçersiz URL | Yüksek | İstekler yanlış adrese/404'e gider | ✅ Düzeltildi (v0.1.6) |
+| 2 | Case-sensitive `Content-Type` kontrolü | Orta | Çakışan/geçersiz header | ✅ Düzeltildi (v0.1.6) |
+| 3 | Retry bekleme süresi `AbortSignal`'i görmezden geliyor | Kritik | Kullanıcı iptali dakikalarca gecikebilir | ✅ Düzeltildi (v0.1.6) |
+| 4 | `HEAD` isteğinde JSON parse crash'i | **Yüksek** | Başarılı `HEAD` isteği hata olarak dönüyor | 🔴 **Hâlâ mevcut** |
+| 5 | `logger.error` HTTP status hatalarında çağrılmıyor | Orta | Monitoring/alarm sistemleri kalıcı 5xx'leri kaçırır | 🔴 **Hâlâ mevcut** |
+| — | `isNetworkError` aşırı geniş kapsam | Düşük (tasarım notu) | — | ✅ Düzeltildi (v0.1.6) |
 
 Kütüphanenin genel API tasarımı (tek `request()` fonksiyonu, `configure()` ile global varsayılanlar, zengin retry hook'ları — `shouldRetry`, `computeDelay`, `onRetry`) temiz ve iyi dokümante edilmiş durumda. Modül dağıtımı (ESM/CJS/TypeScript) da doğru çalışıyor. Ancak yukarıdaki üç bug, özellikle **Bug 3**, production kullanımında ciddi sorunlara yol açabileceğinden öncelikli olarak düzeltilmeli; düzeltme yapılana kadar da en azından README'de "Bilinen Sınırlamalar" olarak belgelenmelidir.
