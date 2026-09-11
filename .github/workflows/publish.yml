@@ -1,19 +1,15 @@
 name: Publish
 
 on:
-  # Optional explicit release via tag (must match package.json version)
+  # merge PR → push to main (required for npm OIDC / Trusted Publisher)
   push:
+    branches: [main]
     tags:
       - 'v*'
-  # npm publish after PR is merged into main (see job guard + CI check)
-  pull_request:
-    types: [closed]
-    branches: [main]
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.merged == true
     permissions:
       actions: read
       contents: read
@@ -22,12 +18,33 @@ jobs:
       group: npm-publish
       cancel-in-progress: false
     steps:
+      - name: Resolve merged PR head (main pushes only)
+        if: github.ref == 'refs/heads/main'
+        id: merge
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+            });
+            const merged = prs.find((p) => p.merged_at && p.base.ref === 'main');
+            if (!merged) {
+              core.setFailed(
+                'Publish runs only after a PR is merged to main (not on direct pushes).',
+              );
+              return;
+            }
+            core.setOutput('head_sha', merged.head.sha);
+            core.info(`Merged PR #${merged.number}; CI will be checked on ${merged.head.sha}.`);
+
       - name: Require successful CI on merged PR
-        if: github.event_name == 'pull_request'
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          HEAD_SHA="${{ steps.merge.outputs.head_sha }}"
           CONCLUSION="$(gh run list \
             --repo "${{ github.repository }}" \
             --workflow=ci.yml \
@@ -43,8 +60,6 @@ jobs:
           echo "CI succeeded on PR commit ${HEAD_SHA}; continuing to publish."
 
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -61,7 +76,7 @@ jobs:
         run: npm ci
 
       - name: Verify package.json version matches tag
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
@@ -84,6 +99,10 @@ jobs:
             echo "already_published=false" >> "$GITHUB_OUTPUT"
             echo "Version ${PKG_VERSION} is not on npm; will publish."
           fi
+
+      - name: Verify npm OIDC authentication
+        if: steps.npm_version.outputs.already_published != 'true'
+        run: npm whoami
 
       # prepublishOnly in package.json runs typecheck, tests, and build before publish
       - name: Publish to npm (OIDC, tokenless)
