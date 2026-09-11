@@ -22,6 +22,7 @@ const { data } = await request({ url: 'https://api.example.com/users' });
 ## Table of contents
 
 - [Installation](#installation)
+- [Module formats (ESM, CJS, TypeScript)](#module-formats-esm-cjs-typescript)
 - [Quick start](#quick-start)
 - [`configure()` — global defaults](#configure--global-defaults)
 - [`request()` — all config options](#request--all-config-options)
@@ -46,6 +47,33 @@ const { data } = await request({ url: 'https://api.example.com/users' });
 
 ```bash
 npm install @guzelbaspinar/fetch-kit
+```
+
+## Module formats (ESM, CJS, TypeScript)
+
+The package ships both an ESM and a CJS build (via `tsup`), plus `.d.ts`/`.d.cts` type declarations, wired up through `exports` in `package.json`. Use whichever your project needs — no extra configuration required:
+
+```ts
+// ESM
+import { request, configure } from '@guzelbaspinar/fetch-kit';
+```
+
+```js
+// CommonJS
+const { request, configure } = require('@guzelbaspinar/fetch-kit');
+```
+
+```ts
+// TypeScript, with generics for typed responses
+import { request } from '@guzelbaspinar/fetch-kit';
+
+interface User {
+  id: number;
+  name: string;
+}
+
+const { data } = await request<User[]>({ url: 'https://api.example.com/users' });
+// data: User[]
 ```
 
 ## Quick start
@@ -90,7 +118,7 @@ Every field passed to `configure()` is optional and only updates what you specif
 
 | Option | Type | Description |
 |---|---|---|
-| `baseUrl` | `string` | Prepended to all request paths. Trailing `/` is stripped. If `request()` uses a full `http(s)://` URL, it is still combined with `baseUrl` unless you omit `baseUrl` when you want absolute URLs only. |
+| `baseUrl` | `string` | Prepended to all request paths. Trailing `/` is stripped. If `request()`'s `url` is already an absolute `http(s)://` URL, `baseUrl` is **ignored** for that request (the absolute URL is used as-is) — this lets you call other hosts/services even while `baseUrl` is configured. |
 | `headers` | `Record<string,string>` | Default headers on every request. Override per request with `request({ headers })`. |
 | `logger` | `Logger` | Your logger (see [Logger injection](#logger-injection)). If omitted, nothing is logged. |
 | `timeoutMs` | `number` | Default per-request timeout. Override per request. |
@@ -110,7 +138,7 @@ interface RequestConfig<TBody = unknown> {
   url: string;                          // REQUIRED. Path if baseUrl is set, otherwise full URL.
   method?: HttpMethod;                  // 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'. Default: 'GET'
   params?: QueryParams;                 // serialized as query string (see Query parameters)
-  headers?: Record<string, string>;     // merged with configure() headers; per-request keys win
+  headers?: Record<string, string>;     // merged with configure() headers; per-request keys win (merge is case-sensitive on the key name — use consistent casing to avoid duplicate/conflicting headers)
   body?: TBody;                         // JSON.stringify'd + Content-Type: application/json when appropriate
   rawBody?: BodyInit;                   // raw body; no transformation (see Request body)
   timeoutMs?: number;                   // per-request timeout; overrides configure()
@@ -178,7 +206,7 @@ await request({
 
 ## Request body
 
-Objects passed to `body` are `JSON.stringify`'d and `Content-Type: application/json` is set unless you provide your own `Content-Type`:
+Objects passed to `body` are `JSON.stringify`'d and `Content-Type: application/json` is set unless you already provide your own `Content-Type` header (checked case-insensitively, so `content-type`, `Content-Type`, or `CONTENT-TYPE` are all recognized and none of them get overridden or duplicated):
 
 ```ts
 await request({ url: '/users', method: 'POST', body: { name: 'Ada', email: 'ada@example.com' } });
@@ -237,7 +265,7 @@ Default behavior: **exponential backoff + full jitter**, retrying on these statu
 408, 429, 500, 502, 503, 504
 ```
 
-and on network errors (connection loss, DNS failure, etc.) — except `AbortError` (user-initiated cancellation).
+and on network errors (connection loss, DNS failure, etc., detected via `TypeError`s and known Node/undici error codes like `ECONNRESET`/`ENOTFOUND`) — except `AbortError` (user-initiated cancellation) and other unrecognized errors, which are treated as programming errors and are not retried by default (override with `shouldRetry` if you need broader retry coverage).
 
 ### Default options
 
@@ -437,6 +465,8 @@ request({ url: '/long-running', signal: controller.signal })
 // elsewhere:
 controller.abort();
 ```
+
+**Cancellation and retries.** Your `signal` is honored both while a request is in flight *and* while fetch-kit is waiting between retry attempts (the exponential-backoff delay). Calling `controller.abort()` interrupts an in-progress backoff wait immediately instead of waiting for it to elapse, and no further retry attempts are made — the request rejects right away with a `FetchKitError` wrapping the abort reason.
 
 ---
 

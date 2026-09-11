@@ -44,6 +44,20 @@ describe('buildUrl', () => {
       'https://api.example.com/users?active=true'
     );
   });
+
+  it('ignores baseUrl when path is already an absolute http(s) URL', () => {
+    assert.equal(
+      buildUrl('https://api.example.com', 'https://other-service.com/data'),
+      'https://other-service.com/data'
+    );
+  });
+
+  it('ignores baseUrl for absolute URLs and still appends query params', () => {
+    assert.equal(
+      buildUrl('https://api.example.com', 'http://other-service.com/data', { id: 1 }),
+      'http://other-service.com/data?id=1'
+    );
+  });
 });
 
 describe('isNetworkError', () => {
@@ -52,8 +66,18 @@ describe('isNetworkError', () => {
     assert.equal(isNetworkError(err), false);
   });
 
-  it('returns true for other errors', () => {
-    assert.equal(isNetworkError(new TypeError('network fail')), true);
-    assert.equal(isNetworkError('random string'), true);
+  it('returns true for TypeError (fetch/undici connection failures)', () => {
+    assert.equal(isNetworkError(new TypeError('fetch failed')), true);
+  });
+
+  it('returns true for known Node/undici network error codes', () => {
+    const err = Object.assign(new Error('connection reset'), { code: 'ECONNRESET' });
+    assert.equal(isNetworkError(err), true);
+  });
+
+  it('returns false for unrelated/programming errors', () => {
+    assert.equal(isNetworkError(new RangeError('boom')), false);
+    assert.equal(isNetworkError('random string'), false);
+    assert.equal(isNetworkError(new Error('generic error')), false);
   });
 });

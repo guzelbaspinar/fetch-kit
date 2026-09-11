@@ -141,6 +141,39 @@ describe('request() - successful requests', () => {
     assert.equal(capturedHeaders['Content-Type'], 'application/vnd.api+json');
   });
 
+  it('does not add a duplicate Content-Type when caller uses a different case', async () => {
+    let capturedHeaders: Record<string, string> = {};
+    const fetchImpl = mock.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      capturedHeaders = init?.headers as Record<string, string>;
+      return jsonResponse({});
+    });
+    configure({ fetchImpl });
+
+    await request({
+      url: 'https://api.example.com/users',
+      method: 'POST',
+      body: { name: 'Ada' },
+      headers: { 'content-type': 'text/plain' }
+    });
+
+    const keys = Object.keys(capturedHeaders).filter((k) => k.toLowerCase() === 'content-type');
+    assert.equal(keys.length, 1, 'should only have one Content-Type-like header key');
+    assert.equal(capturedHeaders['content-type'], 'text/plain');
+  });
+
+  it('ignores baseUrl when the request url is already absolute', async () => {
+    let capturedUrl = '';
+    const fetchImpl = mock.fn(async (url: RequestInfo | URL) => {
+      capturedUrl = String(url);
+      return jsonResponse({});
+    });
+    configure({ baseUrl: 'https://api.example.com', fetchImpl });
+
+    await request({ url: 'https://other-service.com/data' });
+
+    assert.equal(capturedUrl, 'https://other-service.com/data');
+  });
+
   it('does not attach a JSON body for GET when body is provided', async () => {
     let capturedInit: RequestInit | undefined;
     const fetchImpl = mock.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -202,6 +235,30 @@ describe('request() - AbortSignal', () => {
     });
     assert.equal(fetchImpl.mock.calls.length, 1);
     assert.ok(fetchImpl.mock.calls[0].arguments[1]?.signal?.aborted);
+  });
+
+  it('interrupts the retry backoff wait immediately when the signal is aborted', async () => {
+    const controller = new AbortController();
+    const fetchImpl = mock.fn(async () => new Response('fail', { status: 503 }));
+    configure({
+      fetchImpl,
+      retry: { retries: 5, baseDelayMs: 2000, maxDelayMs: 2000, jitter: false }
+    });
+
+    const start = Date.now();
+    const promise = request({ url: 'https://api.example.com/x', signal: controller.signal });
+    setTimeout(() => controller.abort(), 50);
+
+    await assert.rejects(promise, (err: unknown) => {
+      assert.ok(err instanceof FetchKitError);
+      return true;
+    });
+
+    const elapsed = Date.now() - start;
+    // Should reject shortly after the abort, not after the full 2000ms backoff.
+    assert.ok(elapsed < 500, `expected rejection well under 2000ms backoff, took ${elapsed}ms`);
+    // Only the first attempt should have run; the retry loop should not continue.
+    assert.equal(fetchImpl.mock.calls.length, 1);
   });
 });
 
