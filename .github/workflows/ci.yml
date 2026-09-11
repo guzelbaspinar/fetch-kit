@@ -1,7 +1,7 @@
 name: CI
 
 # Runs when a PR targets main (open / update / reopen).
-# After merge, Publish runs only if the latest CI on the PR head commit succeeded (see publish.yml).
+# After merge (push to main), Publish runs if CI succeeded on the merged PR head (see publish.yml).
 on:
   pull_request:
     branches: [main]
