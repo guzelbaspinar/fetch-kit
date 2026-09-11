@@ -1,38 +1,50 @@
 name: Publish
 
 on:
-  # Explicit release: push tag v* after bumping package.json on main
+  # Optional explicit release via tag (must match package.json version)
   push:
     tags:
       - 'v*'
-  # After merge to main: publish only when CI passed and this version is not on npm yet
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  # npm publish after PR is merged into main (see job guard + CI check)
+  pull_request:
+    types: [closed]
     branches: [main]
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # Tag pushes always attempt publish (with version check).
-    # workflow_run: only successful pushes to main (not PR CI runs).
-    if: >
-      github.event_name == 'push' ||
-      (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push'
-      )
+    if: github.event_name == 'push' || github.event.pull_request.merged == true
     permissions:
       actions: read
       contents: read
       id-token: write # required for npm OIDC trusted publishing; no NPM_TOKEN secret
     concurrency:
-      group: npm-publish-${{ github.event_name == 'push' && github.ref || github.event.workflow_run.head_branch }}
+      group: npm-publish
       cancel-in-progress: false
     steps:
+      - name: Require successful CI on merged PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          CONCLUSION="$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow=ci.yml \
+            --commit="$HEAD_SHA" \
+            --event=pull_request \
+            --limit 1 \
+            --json conclusion \
+            --jq '.[0].conclusion // empty')"
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "Publish blocked: CI must succeed on PR commit ${HEAD_SHA} (latest CI conclusion: ${CONCLUSION:-none})."
+            exit 1
+          fi
+          echo "CI succeeded on PR commit ${HEAD_SHA}; continuing to publish."
+
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -47,18 +59,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Typecheck examples
-        run: npm run typecheck:examples
-
-      - name: Run tests
-        run: npm test
-
-      - name: Build
-        run: npm run build
 
       - name: Verify package.json version matches tag
         if: github.event_name == 'push'
@@ -85,16 +85,7 @@ jobs:
             echo "Version ${PKG_VERSION} is not on npm; will publish."
           fi
 
-      # OIDC trusted publishing: no NPM_TOKEN or other long-lived secrets.
-      # npm CLI picks up the short-lived OIDC token GitHub issues for this workflow.
-      # Provenance attestation is added automatically (no --provenance flag needed).
-      #
-      # PREREQUISITE: configure "Trusted Publisher" on npmjs.com for this package:
-      #   Package Settings → Trusted Publisher → GitHub Actions
-      #   - Organization/user: guzelbaspinar
-      #   - Repository: fetch-kit
-      #   - Workflow filename: publish.yml
-      #   (The first publish must be done manually once; see steps in README or maintainer notes.)
+      # prepublishOnly in package.json runs typecheck, tests, and build before publish
       - name: Publish to npm (OIDC, tokenless)
         if: steps.npm_version.outputs.already_published != 'true'
         run: npm publish --access public

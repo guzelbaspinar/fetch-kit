@@ -41,8 +41,8 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "node --import tsx --test src/**/*.test.ts",
-    "test:coverage": "node --import tsx --experimental-test-coverage --test src/**/*.test.ts",
+    "test": "node --import tsx --test $(find src -name '*.test.ts')",
+    "test:coverage": "node --import tsx --experimental-test-coverage --test $(find src -name '*.test.ts')",
     "typecheck": "tsc --noEmit",
     "typecheck:examples": "tsc --noEmit -p tsconfig.examples.json",
     "prepublishOnly": "npm run typecheck && npm run typecheck:examples && npm run test && npm run build"
