@@ -1,0 +1,56 @@
+{
+  "name": "@guzelbaspinar/fetch-kit",
+  "version": "0.1.1",
+  "description": "Type-safe HTTP client on native fetch with all HTTP methods, customizable exponential backoff retries, and injectable logging.",
+  "keywords": [
+    "fetch",
+    "retry",
+    "http",
+    "backoff",
+    "exponential-backoff",
+    "node",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "guzelbaspinar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guzelbaspinar/fetch-kit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/guzelbaspinar/fetch-kit/issues"
+  },
+  "homepage": "https://github.com/guzelbaspinar/fetch-kit#readme",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "test:coverage": "node --import tsx --experimental-test-coverage --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "typecheck:examples": "tsc --noEmit -p tsconfig.examples.json",
+    "prepublishOnly": "npm run typecheck && npm run typecheck:examples && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.23.12",
+    "typescript": "^5.7.2"
+  }
+}
