@@ -1,6 +1,6 @@
 {
   "name": "@guzelbaspinar/fetch-kit",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Type-safe HTTP client on native fetch with all HTTP methods, customizable exponential backoff retries, and injectable logging.",
   "keywords": [
     "fetch",
