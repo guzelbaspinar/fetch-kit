@@ -84,7 +84,8 @@ class FetchKitEngine {
       body = config.rawBody;
     } else if (config.body !== undefined && method !== 'GET' && method !== 'HEAD') {
       body = JSON.stringify(config.body);
-      if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+      const hasContentType = Object.keys(headers).some((k) => k.toLowerCase() === 'content-type');
+      if (!hasContentType) headers['Content-Type'] = 'application/json';
     }
 
     const maxAttempts = retryConfig.retries + 1;
@@ -118,7 +119,7 @@ class FetchKitEngine {
           !response.ok && (retryConfig.shouldRetry?.(decisionCtx) ?? isRetryableStatus);
 
         if (!response.ok && shouldRetryStatus && attempt < maxAttempts) {
-          await this.waitBeforeRetry(attempt, retryConfig, decisionCtx);
+          await this.waitBeforeRetry(attempt, retryConfig, decisionCtx, config.signal);
           continue;
         }
 
@@ -153,7 +154,7 @@ class FetchKitEngine {
           throw new FetchKitError(`Request failed for ${method} ${url}`, { url, method, cause: error });
         }
 
-        await this.waitBeforeRetry(attempt, retryConfig, decisionCtx);
+        await this.waitBeforeRetry(attempt, retryConfig, decisionCtx, config.signal);
       }
     }
 
@@ -164,7 +165,8 @@ class FetchKitEngine {
   private async waitBeforeRetry(
     attempt: number,
     retryConfig: RetryOptions & Required<Pick<RetryOptions, 'baseDelayMs' | 'maxDelayMs' | 'factor' | 'jitter'>>,
-    ctx: RetryDecisionContext
+    ctx: RetryDecisionContext,
+    signal?: AbortSignal
   ): Promise<void> {
     const defaultDelay = computeExponentialDelay(attempt, retryConfig);
     const delayMs = retryConfig.computeDelay ? retryConfig.computeDelay(ctx, defaultDelay) : defaultDelay;
@@ -175,7 +177,7 @@ class FetchKitEngine {
       ctx.error ?? ctx.response?.status
     );
 
-    await sleep(delayMs);
+    await sleep(delayMs, signal);
   }
 
   private async parseBody<T>(response: Response): Promise<T> {
