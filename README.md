@@ -235,6 +235,8 @@ await request({
 
 > `body` is ignored on `GET` and `HEAD` requests (per the HTTP spec).
 
+> When you pass a **string** as `rawBody`, native `fetch` (Node/undici) may still add a default `Content-Type` (e.g. `text/plain;charset=UTF-8`). fetch-kit does not set or override that header for `rawBody`; it is the runtime’s default behavior. Set `headers` explicitly if you need a specific value.
+
 ---
 
 ## Response body: JSON or plain text?
