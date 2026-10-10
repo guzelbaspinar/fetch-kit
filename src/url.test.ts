@@ -81,3 +81,15 @@ describe('isNetworkError', () => {
     assert.equal(isNetworkError(new Error('generic error')), false);
   });
 });
+
+describe('buildUrl query edge cases', () => {
+  it('uses & when URL already has a query', () => {
+    assert.equal(buildUrl(undefined, 'http://a/x?y=1', { q: 2 }), 'http://a/x?y=1&q=2');
+  });
+  it('inserts query before the fragment', () => {
+    assert.equal(buildUrl(undefined, 'http://a/x#h', { q: 2 }), 'http://a/x?q=2#h');
+  });
+  it('treats TimeoutError as a network error', () => {
+    assert.equal(isNetworkError(new DOMException('t', 'TimeoutError')), true);
+  });
+});

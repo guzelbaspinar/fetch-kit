@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-10
+
+### Fixed
+
+- Timeouts are now retried and cover response body reading; timers and `signal` listeners are cleaned up per attempt.
+- Discarded retry responses are cancelled to release connections.
+- `+json` content types (e.g. `application/problem+json`) are parsed as JSON.
+- `undefined` retry fields no longer override defaults; negative/NaN `retries` are clamped.
+- `buildUrl` handles existing `?` and `#fragment`.
+- Default `fetch` is resolved at call time (works with mocked `globalThis.fetch`).
+- `rawBody` with GET/HEAD throws a `FetchKitError` immediately without retrying.
+- `error.response` body remains readable (body is read from a clone).
+- Dual package hazard: engine state and `FetchKitError` `instanceof` are shared across ESM/CJS copies.
+- `exports` now provides separate `types` for `import` and `require`.
+
+### Documentation
+
+- README: `rawBody` on GET/HEAD behavior; fix broken `examples/usage.ts` links to GitHub.
+
 ## [0.1.8] - 2026-09-12
 
 ### Documentation

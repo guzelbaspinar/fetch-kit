@@ -38,11 +38,20 @@ function mergeRetryOptions(
   perRequest: RetryOptions | undefined
 ): Required<Pick<RetryOptions, 'retries' | 'baseDelayMs' | 'maxDelayMs' | 'factor' | 'jitter' | 'retryOnStatusCodes'>> &
   RetryOptions {
-  return {
+  const merged = {
     ...DEFAULT_RETRY,
-    ...defaults,
-    ...perRequest
+    ...stripUndefined(defaults),
+    ...stripUndefined(perRequest)
   };
+  // Guard against NaN / negative / fractional values: fall back to default or clamp to >= 0.
+  const retries = Number(merged.retries);
+  merged.retries = Number.isFinite(retries) ? Math.max(0, Math.floor(retries)) : DEFAULT_RETRY.retries;
+  return merged;
+}
+
+function stripUndefined<T extends object>(obj: T | undefined): Partial<T> {
+  if (!obj) return {};
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
 /**
@@ -55,7 +64,7 @@ class FetchKitEngine {
   logger: Logger = noopLogger;
   defaultRetry?: RetryOptions;
   defaultTimeoutMs?: number;
-  fetchImpl: typeof fetch = fetch;
+  fetchImpl?: typeof fetch;
 
   configure(options: FetchKitOptions): void {
     if (options.baseUrl !== undefined) this.baseUrl = options.baseUrl;
@@ -88,30 +97,47 @@ class FetchKitEngine {
       if (!hasContentType) headers['Content-Type'] = 'application/json';
     }
 
+    if (config.rawBody !== undefined && (method === 'GET' || method === 'HEAD')) {
+      throw new FetchKitError(`${method} requests cannot have a body (rawBody) for ${url}`, {
+        url,
+        method,
+        cause: new TypeError(`Request with ${method} method cannot have body`)
+      });
+    }
+
     const maxAttempts = retryConfig.retries + 1;
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const controller = new AbortController();
-      const timers: ReturnType<typeof setTimeout>[] = [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const onUserAbort = () => controller.abort(config.signal!.reason);
+
+      const cleanup = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = undefined;
+        config.signal?.removeEventListener('abort', onUserAbort);
+      };
 
       if (timeoutMs) {
-        timers.push(setTimeout(() => controller.abort(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs));
+        timer = setTimeout(
+          () => controller.abort(new DOMException(`Timeout after ${timeoutMs}ms`, 'TimeoutError')),
+          timeoutMs
+        );
       }
       if (config.signal) {
         if (config.signal.aborted) controller.abort(config.signal.reason);
-        else config.signal.addEventListener('abort', () => controller.abort(config.signal!.reason), { once: true });
+        else config.signal.addEventListener('abort', onUserAbort, { once: true });
       }
 
       try {
-        const response = await this.fetchImpl(url, {
+        const doFetch = this.fetchImpl ?? globalThis.fetch;
+        const response = await doFetch(url, {
           method,
           headers,
           body,
           signal: controller.signal
         });
-
-        timers.forEach(clearTimeout);
 
         const isRetryableStatus = retryConfig.retryOnStatusCodes.includes(response.status);
         const decisionCtx: RetryDecisionContext = { attempt, maxRetries: retryConfig.retries, method, url, response };
@@ -119,12 +145,16 @@ class FetchKitEngine {
           !response.ok && (retryConfig.shouldRetry?.(decisionCtx) ?? isRetryableStatus);
 
         if (!response.ok && shouldRetryStatus && attempt < maxAttempts) {
+          // Release the connection held by the discarded response.
+          await response.body?.cancel().catch(() => {});
+          cleanup();
           await this.waitBeforeRetry(attempt, retryConfig, decisionCtx, config.signal);
           continue;
         }
 
         if (!response.ok) {
-          const text = await response.text().catch(() => '');
+          // Read from a clone so `error.response` stays readable for the caller.
+          const text = await response.clone().text().catch(() => '');
           this.logger.error?.(
             `fetch-kit: ${method} ${url} failed after ${attempt} attempt(s), giving up.`,
             { status: response.status }
@@ -138,20 +168,21 @@ class FetchKitEngine {
           });
         }
 
+        // Timeout stays active while the body is being read.
         const data = await this.parseBody<TResponse>(response, method);
         return { data, status: response.status, headers: response.headers, response };
       } catch (error) {
-        timers.forEach(clearTimeout);
+        cleanup();
         lastError = error;
+
+        if (error instanceof FetchKitError) throw error;
 
         const isLastAttempt = attempt >= maxAttempts;
         const decisionCtx: RetryDecisionContext = { attempt, maxRetries: retryConfig.retries, method, url, error };
-        const shouldRetryError =
-          error instanceof FetchKitError
-            ? false // HTTP errors are handled above; do not retry FetchKitError
-            : (retryConfig.shouldRetry?.(decisionCtx) ?? isNetworkError(error));
-
-        if (error instanceof FetchKitError) throw error;
+        const userAborted = config.signal?.aborted === true;
+        const shouldRetryError = userAborted
+          ? false
+          : (retryConfig.shouldRetry?.(decisionCtx) ?? isNetworkError(error));
 
         if (isLastAttempt || !shouldRetryError) {
           this.logger.error?.(`fetch-kit: ${method} ${url} failed after ${attempt} attempt(s), giving up.`, error);
@@ -159,6 +190,8 @@ class FetchKitEngine {
         }
 
         await this.waitBeforeRetry(attempt, retryConfig, decisionCtx, config.signal);
+      } finally {
+        cleanup();
       }
     }
 
@@ -187,14 +220,17 @@ class FetchKitEngine {
   private async parseBody<T>(response: Response, method: HttpMethod): Promise<T> {
     if (response.status === 204 || method === 'HEAD') return undefined as T;
     const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
+    if (/application\/([^;\s]*\+)?json/i.test(contentType)) {
       return (await response.json()) as T;
     }
     return (await response.text()) as unknown as T;
   }
 }
 
-const engine = new FetchKitEngine();
+// Share one engine across ESM/CJS copies of this package (dual package hazard).
+const ENGINE_KEY = Symbol.for('@guzelbaspinar/fetch-kit/engine');
+const globalStore = globalThis as unknown as Record<symbol, FetchKitEngine | undefined>;
+const engine: FetchKitEngine = (globalStore[ENGINE_KEY] ??= new FetchKitEngine());
 
 /**
  * Sets global defaults: baseUrl, headers, logger, retry, timeoutMs, fetchImpl.
@@ -221,7 +257,7 @@ export function resetConfiguration(): void {
   engine.logger = noopLogger;
   engine.defaultRetry = undefined;
   engine.defaultTimeoutMs = undefined;
-  engine.fetchImpl = fetch;
+  engine.fetchImpl = undefined;
 }
 
 /**

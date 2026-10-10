@@ -233,7 +233,7 @@ await request({
 });
 ```
 
-> `body` is ignored on `GET` and `HEAD` requests (per the HTTP spec).
+> `body` is ignored on `GET` and `HEAD` requests (per the HTTP spec). `rawBody` on `GET`/`HEAD` is rejected with a `FetchKitError` (no retry).
 
 > When you pass a **string** as `rawBody`, native `fetch` (Node/undici) may still add a default `Content-Type` (e.g. `text/plain;charset=UTF-8`). fetch-kit does not set or override that header for `rawBody`; it is the runtime’s default behavior. Set `headers` explicitly if you need a specific value.
 
@@ -508,7 +508,7 @@ console.log(data); // raw .ini content as string
 
 ## More examples
 
-[`examples/usage.ts`](examples/usage.ts) is a numbered copy-paste catalog (50 snippets). Functions are not invoked when you run the file; use the index at the top of that file or the table below.
+[`examples/usage.ts`](https://github.com/guzelbaspinar/fetch-kit/blob/main/examples/usage.ts) is a numbered copy-paste catalog (50 snippets). Functions are not invoked when you run the file; use the index at the top of that file or the table below.
 
 | # | Topic | README section |
 |---|--------|----------------|
@@ -596,7 +596,7 @@ interface RetryInfo extends RetryDecisionContext {
 | Delay before next attempt | `computeDelay(ctx, defaultDelayMs)` if set; else exponential backoff from `baseDelayMs`, `factor`, `maxDelayMs`, and `jitter`. |
 | After delay is chosen | `onRetry(info)` runs, then the library sleeps `delayMs`. |
 
-Defaults and narrative: [Retry](#retry). Runnable numbered snippets for examples **20–38** live in [`examples/usage.ts`](examples/usage.ts). Below: one example per field, then common multi-field combinations.
+Defaults and narrative: [Retry](#retry). Runnable numbered snippets for examples **20–38** live in [`examples/usage.ts`](https://github.com/guzelbaspinar/fetch-kit/blob/main/examples/usage.ts). Below: one example per field, then common multi-field combinations.
 
 #### Single options (defaults for everything else)
 
