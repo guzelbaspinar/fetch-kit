@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-10
+
+### Fixed
+
+- Errors thrown by `shouldRetry`, `computeDelay` and `onRetry` now propagate unwrapped on every path (previously an `onRetry` error on the HTTP-status path was wrapped in `FetchKitError`, and `shouldRetry` could be invoked twice per attempt).
+
 ## [0.1.10] - 2026-10-10
 
 ### Fixed

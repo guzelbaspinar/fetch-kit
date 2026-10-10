@@ -553,3 +553,32 @@ describe('regressions (0.1.10)', () => {
     assert.equal(f.mock.callCount(), 1);
   });
 });
+
+describe('callback errors propagate unwrapped (0.1.11)', () => {
+  const fast = { baseDelayMs: 1, jitter: false, retries: 2 };
+  const cases: Array<[string, (e: Error) => any]> = [
+    ['onRetry', (e) => ({ onRetry: () => { throw e; } })],
+    ['shouldRetry', (e) => ({ shouldRetry: () => { throw e; } })],
+    ['computeDelay', (e) => ({ computeDelay: () => { throw e; } })]
+  ];
+  for (const [name, mk] of cases) {
+    it(`${name} error on HTTP status path is raw`, async () => {
+      const err = new Error(name);
+      const f = mock.fn(async () => new Response('x', { status: 503 }));
+      configure({ fetchImpl: f as any });
+      await assert.rejects(request({ url: 'http://x/', retry: { ...fast, ...mk(err) } }), (e) => e === err);
+    });
+    it(`${name} error on network error path is raw`, async () => {
+      const err = new Error(name);
+      const f = mock.fn(async () => { throw new TypeError('fetch failed'); });
+      configure({ fetchImpl: f as any });
+      await assert.rejects(request({ url: 'http://x/', retry: { ...fast, ...mk(err) } }), (e) => e === err);
+    });
+  }
+  it('shouldRetry is called exactly once per attempt on status path', async () => {
+    let calls = 0;
+    configure({ fetchImpl: (async () => new Response('x', { status: 503 })) as any });
+    await assert.rejects(request({ url: 'http://x/', retry: { ...fast, retries: 1, shouldRetry: () => { calls++; return true; } } }));
+    assert.equal(calls, 2); // 2 attempts, no duplicate call from the catch path
+  });
+});
