@@ -57,6 +57,19 @@ function stripUndefined<T extends object>(obj: T | undefined): Partial<T> {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
 
+/** Internal marker for errors thrown by user callbacks; unwrapped before reaching the caller. */
+class CallbackError {
+  constructor(readonly original: unknown) {}
+}
+
+function callUser<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (error) {
+    throw new CallbackError(error);
+  }
+}
+
 /**
  * Internal engine. Not exported as a class — a single singleton used via `configure()` and `request()`,
  * so consumers never need `new` or `createFetchKit()`.
@@ -79,6 +92,18 @@ class FetchKitEngine {
   }
 
   async request<TResponse = unknown, TBody = unknown>(
+    config: RequestConfig<TBody>
+  ): Promise<FetchKitResponse<TResponse>> {
+    try {
+      return await this.execute<TResponse, TBody>(config);
+    } catch (error) {
+      // Errors from user callbacks (shouldRetry/computeDelay/onRetry) propagate unwrapped.
+      if (error instanceof CallbackError) throw error.original;
+      throw error;
+    }
+  }
+
+  private async execute<TResponse = unknown, TBody = unknown>(
     config: RequestConfig<TBody>
   ): Promise<FetchKitResponse<TResponse>> {
     const method: HttpMethod = config.method ?? 'GET';
@@ -153,7 +178,7 @@ class FetchKitEngine {
         const isRetryableStatus = retryConfig.retryOnStatusCodes.includes(response.status);
         const decisionCtx: RetryDecisionContext = { attempt, maxRetries: retryConfig.retries, method, url, response };
         const shouldRetryStatus =
-          !response.ok && (retryConfig.shouldRetry?.(decisionCtx) ?? isRetryableStatus);
+          !response.ok && ((retryConfig.shouldRetry ? callUser(() => retryConfig.shouldRetry!(decisionCtx)) : undefined) ?? isRetryableStatus);
 
         if (!response.ok && shouldRetryStatus && attempt < maxAttempts) {
           // Release the connection held by the discarded response.
@@ -186,14 +211,14 @@ class FetchKitEngine {
         cleanup();
         lastError = error;
 
-        if (error instanceof FetchKitError) throw error;
+        if (error instanceof CallbackError || error instanceof FetchKitError) throw error;
 
         const isLastAttempt = attempt >= maxAttempts;
         const decisionCtx: RetryDecisionContext = { attempt, maxRetries: retryConfig.retries, method, url, error };
         const userAborted = config.signal?.aborted === true;
         const shouldRetryError = userAborted
           ? false
-          : (retryConfig.shouldRetry?.(decisionCtx) ?? isNetworkError(error));
+          : ((retryConfig.shouldRetry ? callUser(() => retryConfig.shouldRetry!(decisionCtx)) : undefined) ?? isNetworkError(error));
 
         if (isLastAttempt || !shouldRetryError) {
           this.logger.error?.(`fetch-kit: ${method} ${url} failed after ${attempt} attempt(s), giving up.`, error);
@@ -217,9 +242,9 @@ class FetchKitEngine {
     signal?: AbortSignal
   ): Promise<void> {
     const defaultDelay = computeExponentialDelay(attempt, retryConfig);
-    const delayMs = retryConfig.computeDelay ? retryConfig.computeDelay(ctx, defaultDelay) : defaultDelay;
+    const delayMs = retryConfig.computeDelay ? callUser(() => retryConfig.computeDelay!(ctx, defaultDelay)) : defaultDelay;
 
-    retryConfig.onRetry?.({ ...ctx, delayMs });
+    if (retryConfig.onRetry) callUser(() => retryConfig.onRetry!({ ...ctx, delayMs }));
     this.logger.warn?.(
       `fetch-kit: ${ctx.method} ${ctx.url} failed on attempt ${attempt}, retrying in ${delayMs}ms.`,
       ctx.error ?? ctx.response?.status
