@@ -123,6 +123,10 @@ export class FetchKitError extends Error {
   readonly method: HttpMethod;
   readonly status?: number;
   readonly response?: Response;
+  /**
+   * For HTTP status errors this is the response body as a string; for network/timeout
+   * errors it is the original `Error`. Callback errors (`shouldRetry`, `onRetry`) are not wrapped.
+   */
   readonly cause?: unknown;
 
   constructor(message: string, info: {

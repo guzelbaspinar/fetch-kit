@@ -138,7 +138,7 @@ interface RequestConfig<TBody = unknown> {
   url: string;                          // REQUIRED. Path if baseUrl is set, otherwise full URL.
   method?: HttpMethod;                  // 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'. Default: 'GET'
   params?: QueryParams;                 // serialized as query string (see Query parameters)
-  headers?: Record<string, string>;     // merged with configure() headers; per-request keys win (merge is case-sensitive on the key name — use consistent casing to avoid duplicate/conflicting headers)
+  headers?: Record<string, string>;     // merged with configure() headers; per-request keys win (header names are matched case-insensitively)
   body?: TBody;                         // JSON.stringify'd + Content-Type: application/json when appropriate
   rawBody?: BodyInit;                   // raw body; no transformation (see Request body)
   timeoutMs?: number;                   // per-request timeout; overrides configure()
@@ -418,7 +418,7 @@ try {
 | `method` | HTTP method |
 | `status` | HTTP status when a response was received; `undefined` on network errors |
 | `response` | Raw `Response` object (if any) |
-| `cause` | Original error, or response body text for HTTP errors |
+| `cause` | Original `Error` for network/timeout failures; response body as a `string` for HTTP status errors. Errors thrown by your own `shouldRetry`/`onRetry` callbacks are not wrapped and propagate as-is. |
 
 ---
 

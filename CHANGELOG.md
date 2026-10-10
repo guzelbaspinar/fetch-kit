@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-10
+
+### Fixed
+
+- Header merging is now case-insensitive: a per-request `authorization` replaces a default `Authorization` instead of sending both.
+- Non-number `retries` values (e.g. `'2'`) fall back to the default instead of being coerced.
+
+### Documentation
+
+- Document `FetchKitError.cause` types and that `shouldRetry`/`onRetry` errors propagate unwrapped.
+
 ## [0.1.9] - 2026-10-10
 
 ### Fixed
