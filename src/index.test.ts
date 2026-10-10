@@ -533,3 +533,23 @@ describe('regressions (0.1.9)', () => {
     }
   });
 });
+
+describe('regressions (0.1.10)', () => {
+  it('per-request header wins over default with different casing', async () => {
+    let sent: any;
+    configure({
+      headers: { Authorization: 'g' },
+      fetchImpl: (async (_u: any, init: any) => { sent = init.headers; return jsonResponse({}); }) as any
+    });
+    await request({ url: 'http://x/', headers: { authorization: 'r' } });
+    assert.equal(sent.authorization, 'r');
+    assert.equal(Object.keys(sent).length, 1);
+  });
+
+  it('non-number retries falls back to default', async () => {
+    const f = mock.fn(async () => new Response('x', { status: 400 }));
+    configure({ fetchImpl: f as any });
+    await assert.rejects(request({ url: 'http://x/', retry: { retries: '0' as any } }));
+    assert.equal(f.mock.callCount(), 1);
+  });
+});

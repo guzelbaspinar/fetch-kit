@@ -44,8 +44,11 @@ function mergeRetryOptions(
     ...stripUndefined(perRequest)
   };
   // Guard against NaN / negative / fractional values: fall back to default or clamp to >= 0.
-  const retries = Number(merged.retries);
-  merged.retries = Number.isFinite(retries) ? Math.max(0, Math.floor(retries)) : DEFAULT_RETRY.retries;
+  const retries = merged.retries as unknown;
+  merged.retries =
+    typeof retries === 'number' && Number.isFinite(retries)
+      ? Math.max(0, Math.floor(retries))
+      : DEFAULT_RETRY.retries;
   return merged;
 }
 
@@ -83,10 +86,18 @@ class FetchKitEngine {
     const retryConfig = mergeRetryOptions(this.defaultRetry, config.retry);
     const timeoutMs = config.timeoutMs ?? this.defaultTimeoutMs;
 
-    const headers: Record<string, string> = {
-      ...this.defaultHeaders,
-      ...config.headers
-    };
+    // Header names are case-insensitive: a later source replaces an earlier header of any casing,
+    // while the original casing of the winning key is preserved.
+    const headers: Record<string, string> = {};
+    for (const source of [this.defaultHeaders, config.headers]) {
+      for (const [key, value] of Object.entries(source ?? {})) {
+        const lower = key.toLowerCase();
+        for (const existing of Object.keys(headers)) {
+          if (existing.toLowerCase() === lower) delete headers[existing];
+        }
+        headers[key] = value;
+      }
+    }
 
     let body: BodyInit | undefined;
     if (config.rawBody !== undefined) {
