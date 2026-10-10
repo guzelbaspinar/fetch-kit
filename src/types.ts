@@ -109,7 +109,16 @@ export interface FetchKitResponse<T> {
   response: Response;
 }
 
+const FETCH_KIT_ERROR_BRAND = Symbol.for('@guzelbaspinar/fetch-kit/error');
+
 export class FetchKitError extends Error {
+  /** Brand-based check so `instanceof` works across ESM/CJS copies of the package. */
+  static [Symbol.hasInstance](value: unknown): boolean {
+    return (
+      value instanceof Error && (value as unknown as Record<symbol, unknown>)[FETCH_KIT_ERROR_BRAND] === true
+    );
+  }
+
   readonly url: string;
   readonly method: HttpMethod;
   readonly status?: number;
@@ -130,5 +139,6 @@ export class FetchKitError extends Error {
     this.status = info.status;
     this.response = info.response;
     this.cause = info.cause;
+    Object.defineProperty(this, FETCH_KIT_ERROR_BRAND, { value: true });
   }
 }

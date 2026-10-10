@@ -1,6 +1,6 @@
 {
   "name": "@guzelbaspinar/fetch-kit",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Type-safe HTTP client on native fetch with all HTTP methods, customizable exponential backoff retries, and injectable logging.",
   "keywords": [
     "fetch",
@@ -27,9 +27,14 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "files": [
@@ -48,10 +53,13 @@
     "test:coverage": "node --import tsx --experimental-test-coverage --test $(find src -name '*.test.ts')",
     "typecheck": "tsc --noEmit",
     "typecheck:examples": "tsc --noEmit -p tsconfig.examples.json",
-    "prepublishOnly": "npm run typecheck && npm run typecheck:examples && npm run test && npm run build"
+    "pack:check": "publint && attw --pack .",
+    "prepublishOnly": "npm run typecheck && npm run typecheck:examples && npm run test && npm run build && npm run pack:check"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
     "@types/node": "^26.2.0",
+    "publint": "^0.3.25",
     "tsup": "^8.3.5",
     "tsx": "^4.23.12",
     "typescript": "^5.7.2"

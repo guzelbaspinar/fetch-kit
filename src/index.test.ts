@@ -455,3 +455,81 @@ describe('request() - timeout', () => {
     });
   });
 });
+
+describe('regressions (0.1.9)', () => {
+  const fast = { baseDelayMs: 1, jitter: false };
+
+  it('retries on timeout', async () => {
+    const fetchImpl = mock.fn((_u: any, init: any) =>
+      new Promise<Response>((_res, rej) => init.signal.addEventListener('abort', () => rej(init.signal.reason)))
+    );
+    configure({ fetchImpl: fetchImpl as any });
+    await assert.rejects(request({ url: 'http://x/', timeoutMs: 20, retry: { ...fast, retries: 2 } }), FetchKitError);
+    assert.equal(fetchImpl.mock.callCount(), 3);
+  });
+
+  it('cancels discarded retry response bodies', async () => {
+    const bad = new Response('err', { status: 503 });
+    let n = 0;
+    const f = mock.fn(async () => (n++ === 0 ? bad : jsonResponse({ ok: 1 })));
+    configure({ fetchImpl: f as any });
+    await request({ url: 'http://x/', retry: { ...fast, retries: 1 } });
+    // Cancelled stream can no longer be locked/read.
+    await assert.rejects(bad.text());
+  });
+
+  it('removes signal listeners after retries', async () => {
+    const ac = new AbortController();
+    let added = 0, removed = 0;
+    const add = ac.signal.addEventListener.bind(ac.signal);
+    const rem = ac.signal.removeEventListener.bind(ac.signal);
+    ac.signal.addEventListener = ((...a: any[]) => { added++; return (add as any)(...a); }) as any;
+    ac.signal.removeEventListener = ((...a: any[]) => { removed++; return (rem as any)(...a); }) as any;
+    configure({ fetchImpl: mock.fn(async () => new Response('x', { status: 503 })) as any });
+    await assert.rejects(request({ url: 'http://x/', signal: ac.signal, retry: { ...fast, retries: 3 } }));
+    assert.ok(removed >= added);
+  });
+
+  it('parses +json', async () => {
+    configure({
+      fetchImpl: (async () =>
+        new Response('{"a":1}', { headers: { 'content-type': 'application/problem+json' } })) as any
+    });
+    assert.deepEqual((await request({ url: 'http://x/' })).data, { a: 1 });
+  });
+
+  it('undefined retry fields keep defaults; negative retries still send one request', async () => {
+    const f = mock.fn(async () => jsonResponse({}));
+    configure({ fetchImpl: f as any });
+    await request({ url: 'http://x/', retry: { retries: undefined } });
+    await request({ url: 'http://x/', retry: { retries: -1 } });
+    assert.equal(f.mock.callCount(), 2);
+  });
+
+  it('uses mocked globalThis.fetch when no fetchImpl', async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async () => jsonResponse({ m: 1 })) as any;
+    try {
+      assert.deepEqual((await request({ url: 'http://x/' })).data, { m: 1 });
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('rawBody with GET throws without retry', async () => {
+    const f = mock.fn(async () => jsonResponse({}));
+    configure({ fetchImpl: f as any });
+    await assert.rejects(request({ url: 'http://x/', rawBody: 'a' }), FetchKitError);
+    assert.equal(f.mock.callCount(), 0);
+  });
+
+  it('error.response body stays readable', async () => {
+    configure({ fetchImpl: (async () => new Response('boom', { status: 400 })) as any });
+    try {
+      await request({ url: 'http://x/' });
+      assert.fail('should throw');
+    } catch (e) {
+      assert.equal(await (e as FetchKitError).response!.text(), 'boom');
+    }
+  });
+});

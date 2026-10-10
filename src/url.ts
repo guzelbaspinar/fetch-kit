@@ -15,14 +15,24 @@ export function buildQueryString(params?: QueryParams): string {
   return qs ? `?${qs}` : '';
 }
 
+function appendQuery(url: string, params?: QueryParams): string {
+  const qs = buildQueryString(params).slice(1);
+  if (!qs) return url;
+  const hashIdx = url.indexOf('#');
+  const main = hashIdx === -1 ? url : url.slice(0, hashIdx);
+  const fragment = hashIdx === -1 ? '' : url.slice(hashIdx);
+  const sep = main.includes('?') ? (main.endsWith('?') || main.endsWith('&') ? '' : '&') : '?';
+  return `${main}${sep}${qs}${fragment}`;
+}
+
 export function buildUrl(baseUrl: string | undefined, path: string, params?: QueryParams): string {
   if (/^https?:\/\//i.test(path)) {
     // Absolute URL: ignore baseUrl entirely to avoid producing an invalid combined URL.
-    return `${path}${buildQueryString(params)}`;
+    return appendQuery(path, params);
   }
   const base = baseUrl ? baseUrl.replace(/\/+$/, '') : '';
   const suffix = path.startsWith('/') || !base ? path : `/${path}`;
-  return `${base}${suffix}${buildQueryString(params)}`;
+  return appendQuery(`${base}${suffix}`, params);
 }
 
 /** Node/undici error codes that indicate a genuine network-level failure. */
@@ -41,6 +51,9 @@ const NETWORK_ERROR_CODES = new Set([
 ]);
 
 export function isNetworkError(error: unknown): boolean {
+  // Our own timeout abort: retryable.
+  if (error instanceof DOMException && error.name === 'TimeoutError') return true;
+
   // AbortError means user cancellation; do not retry.
   if (error instanceof DOMException && error.name === 'AbortError') return false;
 
