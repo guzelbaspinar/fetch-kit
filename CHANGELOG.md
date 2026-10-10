@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-10
+
+First stable release. No API changes since 0.1.11; the public API (`request`, `configure`, `resetConfiguration`, `buildUrl`, `buildQueryString`, `computeExponentialDelay`, `FetchKitError` and exported types) is now covered by semantic versioning.
+
+### Known limitations (documented, not bugs)
+
+- `FetchKitError` class identity differs between the ESM and CJS builds; `instanceof` works across both.
+- `body` on GET/HEAD is accepted by the types and ignored at runtime.
+
 ## [0.1.11] - 2026-10-10
 
 ### Fixed
